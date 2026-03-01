@@ -1,0 +1,1174 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>売上集計ツール — 消費税8%/10%振分</title>
+    <meta name="description" content="調剤薬局向け売上入金管理表CSVから消費税8%/10%の売上を自動算出し、Excel出力するツール">
+
+    <!-- SheetJS (xlsx) -->
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+    <!-- Encoding.js (Shift-JIS対応) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/encoding-japanese/2.2.0/encoding.min.js"></script>
+    <!-- jsPDF (PDF出力用) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;600;700&display=swap"
+        rel="stylesheet">
+
+    <style>
+        /* ===== デザインシステム ===== */
+        :root {
+            --bg-primary: #0f1119;
+            --bg-secondary: #1a1d2e;
+            --bg-tertiary: #252940;
+            --bg-card: rgba(30, 34, 56, 0.7);
+            --text-primary: #e8eaf0;
+            --text-secondary: #9ca3b8;
+            --text-muted: #6b7394;
+            --accent-blue: #4f8cff;
+            --accent-purple: #8b5cf6;
+            --accent-cyan: #06d6a0;
+            --accent-pink: #f472b6;
+            --accent-orange: #fb923c;
+            --border-subtle: rgba(255, 255, 255, 0.06);
+            --border-accent: rgba(79, 140, 255, 0.3);
+            --shadow-glow: 0 0 40px rgba(79, 140, 255, 0.15);
+            --gradient-main: linear-gradient(135deg, #4f8cff 0%, #8b5cf6 50%, #f472b6 100%);
+            --gradient-bg: radial-gradient(ellipse at 20% 50%, rgba(79, 140, 255, 0.08) 0%, transparent 50%),
+                radial-gradient(ellipse at 80% 20%, rgba(139, 92, 246, 0.06) 0%, transparent 50%),
+                radial-gradient(ellipse at 50% 80%, rgba(244, 114, 182, 0.04) 0%, transparent 50%);
+            --radius-sm: 8px;
+            --radius-md: 16px;
+            --radius-lg: 24px;
+            --radius-xl: 32px;
+            --font-sans: 'Inter', 'Noto Sans JP', -apple-system, BlinkMacSystemFont, sans-serif;
+        }
+
+        /* ===== リセット＆ベース ===== */
+        *,
+        *::before,
+        *::after {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        html {
+            font-size: 16px;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+
+        body {
+            font-family: var(--font-sans);
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            overflow-x: hidden;
+        }
+
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background: var(--gradient-bg);
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        /* ===== メインコンテナ ===== */
+        .app-container {
+            position: relative;
+            z-index: 1;
+            width: 100%;
+            max-width: 720px;
+            padding: 2rem 1.5rem;
+        }
+
+        /* ===== ヘッダー ===== */
+        .app-header {
+            text-align: center;
+            margin-bottom: 2.5rem;
+        }
+
+        .app-logo {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 64px;
+            height: 64px;
+            border-radius: var(--radius-md);
+            background: var(--gradient-main);
+            margin-bottom: 1.25rem;
+            box-shadow: 0 8px 32px rgba(79, 140, 255, 0.25);
+            animation: float 3s ease-in-out infinite;
+        }
+
+        .app-logo svg {
+            width: 32px;
+            height: 32px;
+            fill: #fff;
+        }
+
+        @keyframes float {
+
+            0%,
+            100% {
+                transform: translateY(0);
+            }
+
+            50% {
+                transform: translateY(-6px);
+            }
+        }
+
+        .app-title {
+            font-size: 1.75rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            background: var(--gradient-main);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 0.5rem;
+        }
+
+        .app-subtitle {
+            font-size: 0.95rem;
+            color: var(--text-secondary);
+            font-weight: 400;
+        }
+
+        /* ===== ドロップゾーン ===== */
+        .drop-zone-wrapper {
+            position: relative;
+        }
+
+        .drop-zone {
+            position: relative;
+            border: 2.5px dashed var(--border-accent);
+            border-radius: var(--radius-xl);
+            padding: 3.5rem 2rem;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+            background: var(--bg-card);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            overflow: hidden;
+        }
+
+        .drop-zone::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            border-radius: inherit;
+            background: linear-gradient(135deg, rgba(79, 140, 255, 0.03), rgba(139, 92, 246, 0.02));
+            transition: opacity 0.35s ease;
+            opacity: 1;
+        }
+
+        .drop-zone:hover,
+        .drop-zone.drag-over {
+            border-color: var(--accent-blue);
+            background: rgba(30, 34, 56, 0.9);
+            box-shadow: var(--shadow-glow);
+            transform: translateY(-2px);
+        }
+
+        .drop-zone:hover::before,
+        .drop-zone.drag-over::before {
+            opacity: 0;
+            background: linear-gradient(135deg, rgba(79, 140, 255, 0.08), rgba(139, 92, 246, 0.05));
+        }
+
+        .drop-zone.drag-over {
+            border-style: solid;
+        }
+
+        .drop-icon {
+            position: relative;
+            z-index: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 88px;
+            height: 88px;
+            margin: 0 auto 1.5rem;
+            border-radius: 50%;
+            background: rgba(79, 140, 255, 0.08);
+            border: 1px solid rgba(79, 140, 255, 0.15);
+            transition: all 0.35s ease;
+        }
+
+        .drop-zone:hover .drop-icon,
+        .drop-zone.drag-over .drop-icon {
+            background: rgba(79, 140, 255, 0.15);
+            border-color: rgba(79, 140, 255, 0.3);
+            transform: scale(1.05);
+        }
+
+        .drop-icon svg {
+            width: 40px;
+            height: 40px;
+            stroke: var(--accent-blue);
+            fill: none;
+            stroke-width: 1.5;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }
+
+        .drop-label {
+            position: relative;
+            z-index: 1;
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 0.5rem;
+            line-height: 1.6;
+        }
+
+        .drop-hint {
+            position: relative;
+            z-index: 1;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+
+        .drop-hint span {
+            color: var(--accent-blue);
+            text-decoration: underline;
+            text-underline-offset: 2px;
+        }
+
+        /* 隠しファイルインプット */
+        .file-input {
+            display: none;
+        }
+
+        /* ===== 処理状態の表示 ===== */
+        .status-area {
+            margin-top: 1.5rem;
+            min-height: 80px;
+        }
+
+        .status-card {
+            display: none;
+            align-items: center;
+            gap: 1rem;
+            padding: 1.25rem 1.5rem;
+            border-radius: var(--radius-md);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            animation: slideUp 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(12px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .status-card.visible {
+            display: flex;
+        }
+
+        .status-card.processing {
+            background: rgba(79, 140, 255, 0.08);
+            border: 1px solid rgba(79, 140, 255, 0.2);
+        }
+
+        .status-card.success {
+            background: rgba(6, 214, 160, 0.08);
+            border: 1px solid rgba(6, 214, 160, 0.2);
+        }
+
+        .status-card.error {
+            background: rgba(239, 68, 68, 0.08);
+            border: 1px solid rgba(239, 68, 68, 0.2);
+        }
+
+        .status-icon {
+            flex-shrink: 0;
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .status-card.processing .status-icon {
+            background: rgba(79, 140, 255, 0.12);
+        }
+
+        .status-card.success .status-icon {
+            background: rgba(6, 214, 160, 0.12);
+        }
+
+        .status-card.error .status-icon {
+            background: rgba(239, 68, 68, 0.12);
+        }
+
+        .status-icon svg {
+            width: 22px;
+            height: 22px;
+            fill: none;
+            stroke-width: 2;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }
+
+        .status-card.processing .status-icon svg {
+            stroke: var(--accent-blue);
+            animation: spin 1s linear infinite;
+        }
+
+        .status-card.success .status-icon svg {
+            stroke: var(--accent-cyan);
+        }
+
+        .status-card.error .status-icon svg {
+            stroke: #ef4444;
+        }
+
+        @keyframes spin {
+            from {
+                transform: rotate(0deg);
+            }
+
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        .status-text {
+            flex: 1;
+        }
+
+        .status-title {
+            font-size: 0.95rem;
+            font-weight: 600;
+            margin-bottom: 0.15rem;
+        }
+
+        .status-card.processing .status-title {
+            color: var(--accent-blue);
+        }
+
+        .status-card.success .status-title {
+            color: var(--accent-cyan);
+        }
+
+        .status-card.error .status-title {
+            color: #ef4444;
+        }
+
+        .status-detail {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+        }
+
+        /* ===== 処理結果サマリー ===== */
+        .summary-card {
+            display: none;
+            margin-top: 1rem;
+            padding: 1.5rem;
+            border-radius: var(--radius-md);
+            background: var(--bg-card);
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--border-subtle);
+            animation: slideUp 0.5s cubic-bezier(0.4, 0, 0.2, 1) 0.15s both;
+        }
+
+        .summary-card.visible {
+            display: block;
+        }
+
+        .summary-title {
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            margin-bottom: 1rem;
+        }
+
+        .summary-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.75rem;
+        }
+
+        .summary-item {
+            padding: 1rem;
+            border-radius: var(--radius-sm);
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--border-subtle);
+        }
+
+        .summary-item-label {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-bottom: 0.35rem;
+        }
+
+        .summary-item-value {
+            font-size: 1.25rem;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .summary-item.tax8 .summary-item-value {
+            color: var(--accent-cyan);
+        }
+
+        .summary-item.tax10 .summary-item-value {
+            color: var(--accent-purple);
+        }
+
+        .summary-item.rows .summary-item-value {
+            color: var(--accent-blue);
+        }
+
+        .summary-item.total .summary-item-value {
+            color: var(--accent-orange);
+        }
+
+        /* ===== フッター ===== */
+        .app-footer {
+            text-align: center;
+            margin-top: 3rem;
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+
+        /* ===== レスポンシブ ===== */
+        @media (max-width: 480px) {
+            .app-container {
+                padding: 1.5rem 1rem;
+            }
+
+            .app-title {
+                font-size: 1.35rem;
+            }
+
+            .drop-zone {
+                padding: 2.5rem 1.25rem;
+            }
+
+            .drop-label {
+                font-size: 1rem;
+            }
+
+            .summary-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="app-container">
+        <!-- ヘッダー -->
+        <header class="app-header">
+            <div class="app-logo">
+                <svg viewBox="0 0 24 24">
+                    <path d="M9 7h6v10H9zM4 7h3v10H4zM17 7h3v10H17z" />
+                </svg>
+            </div>
+            <h1 class="app-title">売上集計ツール</h1>
+            <p class="app-subtitle">消費税 8% / 10% 売上の自動振り分け＆Excel出力</p>
+        </header>
+
+        <!-- ドラッグ＆ドロップエリア -->
+        <div class="drop-zone-wrapper">
+            <div class="drop-zone" id="dropZone">
+                <div class="drop-icon">
+                    <svg viewBox="0 0 24 24">
+                        <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
+                        <polyline points="14 2 14 8 20 8" />
+                        <line x1="12" y1="18" x2="12" y2="12" />
+                        <polyline points="9 15 12 12 15 15" />
+                    </svg>
+                </div>
+                <p class="drop-label">ここに売上入金管理表(CSV)を<br>ドラッグ＆ドロップしてください</p>
+                <p class="drop-hint">または<span>クリックしてファイルを選択</span></p>
+            </div>
+            <input type="file" class="file-input" id="fileInput" accept=".csv">
+        </div>
+
+        <!-- ステータス表示 -->
+        <div class="status-area">
+            <!-- 処理中 -->
+            <div class="status-card processing" id="statusProcessing">
+                <div class="status-icon">
+                    <svg viewBox="0 0 24 24">
+                        <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                    </svg>
+                </div>
+                <div class="status-text">
+                    <div class="status-title">処理中...</div>
+                    <div class="status-detail">CSVデータを解析しています</div>
+                </div>
+            </div>
+            <!-- 成功 -->
+            <div class="status-card success" id="statusSuccess">
+                <div class="status-icon">
+                    <svg viewBox="0 0 24 24">
+                        <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                </div>
+                <div class="status-text">
+                    <div class="status-title">完了しました！</div>
+                    <div class="status-detail" id="successDetail">Excelファイルをダウンロードしました</div>
+                </div>
+            </div>
+            <!-- エラー -->
+            <div class="status-card error" id="statusError">
+                <div class="status-icon">
+                    <svg viewBox="0 0 24 24">
+                        <circle cx="12" cy="12" r="10" />
+                        <line x1="15" y1="9" x2="9" y2="15" />
+                        <line x1="9" y1="9" x2="15" y2="15" />
+                    </svg>
+                </div>
+                <div class="status-text">
+                    <div class="status-title">エラー</div>
+                    <div class="status-detail" id="errorDetail">問題が発生しました</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- サマリー -->
+        <div class="summary-card" id="summaryCard">
+            <div class="summary-title">集計サマリー</div>
+            <div class="summary-grid">
+                <div class="summary-item tax8">
+                    <div class="summary-item-label">8% 売上合計（税込）</div>
+                    <div class="summary-item-value" id="sumTax8">—</div>
+                </div>
+                <div class="summary-item tax10">
+                    <div class="summary-item-label">10% 売上合計（税込）</div>
+                    <div class="summary-item-value" id="sumTax10">—</div>
+                </div>
+                <div class="summary-item rows">
+                    <div class="summary-item-label">データ行数</div>
+                    <div class="summary-item-value" id="sumRows">—</div>
+                </div>
+                <div class="summary-item total">
+                    <div class="summary-item-label">8%+10% 合計</div>
+                    <div class="summary-item-value" id="sumTotal">—</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- フッター -->
+        <footer class="app-footer">
+            売上集計ツール v1.0 — すべてブラウザ上で処理されます。データは外部に送信されません。
+        </footer>
+    </div>
+
+    <script>
+        (function () {
+            'use strict';
+
+            // ===== DOM要素の取得 =====
+            const dropZone = document.getElementById('dropZone');
+            const fileInput = document.getElementById('fileInput');
+            const statusProcessing = document.getElementById('statusProcessing');
+            const statusSuccess = document.getElementById('statusSuccess');
+            const statusError = document.getElementById('statusError');
+            const successDetail = document.getElementById('successDetail');
+            const errorDetail = document.getElementById('errorDetail');
+            const summaryCard = document.getElementById('summaryCard');
+            const sumTax8 = document.getElementById('sumTax8');
+            const sumTax10 = document.getElementById('sumTax10');
+            const sumRows = document.getElementById('sumRows');
+            const sumTotal = document.getElementById('sumTotal');
+
+            // ===== ステータス表示の制御 =====
+            function hideAllStatus() {
+                statusProcessing.classList.remove('visible');
+                statusSuccess.classList.remove('visible');
+                statusError.classList.remove('visible');
+                summaryCard.classList.remove('visible');
+            }
+
+            function showProcessing() {
+                hideAllStatus();
+                statusProcessing.classList.add('visible');
+            }
+
+            function showSuccess(detail) {
+                statusProcessing.classList.remove('visible');
+                successDetail.textContent = detail || 'Excelファイルをダウンロードしました';
+                statusSuccess.classList.add('visible');
+            }
+
+            function showError(detail) {
+                statusProcessing.classList.remove('visible');
+                errorDetail.textContent = detail || '問題が発生しました';
+                statusError.classList.add('visible');
+            }
+
+            function showSummary(tax8Total, tax10Total, rowCount) {
+                sumTax8.textContent = '¥' + tax8Total.toLocaleString();
+                sumTax10.textContent = '¥' + tax10Total.toLocaleString();
+                sumRows.textContent = rowCount + ' 行';
+                sumTotal.textContent = '¥' + (tax8Total + tax10Total).toLocaleString();
+                summaryCard.classList.add('visible');
+            }
+
+            // ===== 金額のフォーマット =====
+            function formatCurrency(value) {
+                return '¥' + value.toLocaleString();
+            }
+
+            // ===== ドラッグ＆ドロップイベント =====
+            // ブラウザのデフォルト動作を無効化（ファイルが直接開かれるのを防止）
+            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+                document.body.addEventListener(eventName, e => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                });
+            });
+
+            // ドロップゾーンのハイライト制御
+            ['dragenter', 'dragover'].forEach(eventName => {
+                dropZone.addEventListener(eventName, () => {
+                    dropZone.classList.add('drag-over');
+                });
+            });
+
+            ['dragleave', 'drop'].forEach(eventName => {
+                dropZone.addEventListener(eventName, () => {
+                    dropZone.classList.remove('drag-over');
+                });
+            });
+
+            // ドロップ時の処理
+            dropZone.addEventListener('drop', e => {
+                const files = e.dataTransfer.files;
+                if (files.length > 0) {
+                    handleFile(files[0]);
+                }
+            });
+
+            // クリックでファイル選択
+            dropZone.addEventListener('click', () => {
+                fileInput.click();
+            });
+
+            fileInput.addEventListener('change', e => {
+                if (e.target.files.length > 0) {
+                    handleFile(e.target.files[0]);
+                    // 同じファイルを再度選択できるようリセット
+                    fileInput.value = '';
+                }
+            });
+
+            // ===== ファイル処理のメイン関数 =====
+            function handleFile(file) {
+                // CSVファイルかチェック（拡張子による判定）
+                const fileName = file.name.toLowerCase();
+                if (!fileName.endsWith('.csv')) {
+                    showError('CSVファイル（.csv）を選択してください。ドロップされたファイル: ' + file.name);
+                    return;
+                }
+
+                showProcessing();
+
+                const reader = new FileReader();
+
+                reader.onload = function (e) {
+                    try {
+                        // バイナリデータからテキストにデコード
+                        const arrayBuffer = e.target.result;
+                        const uint8Array = new Uint8Array(arrayBuffer);
+
+                        // Encoding.jsで文字コードを自動検出してUTF-8に変換
+                        const detectedEncoding = Encoding.detect(uint8Array);
+                        const unicodeArray = Encoding.convert(uint8Array, {
+                            to: 'UNICODE',
+                            from: detectedEncoding,
+                            type: 'string'
+                        });
+                        const csvText = unicodeArray;
+
+                        // CSV解析を実行
+                        processCSV(csvText, file.name);
+                    } catch (err) {
+                        showError('ファイルの読み込みに失敗しました: ' + err.message);
+                        console.error(err);
+                    }
+                };
+
+                reader.onerror = function () {
+                    showError('ファイルの読み込み中にエラーが発生しました');
+                };
+
+                // ArrayBufferとして読み込む（エンコーディング変換のため）
+                reader.readAsArrayBuffer(file);
+            }
+
+            // ===== CSV解析関数 =====
+            function processCSV(csvText, originalFileName) {
+                try {
+                    // 改行で分割
+                    const lines = csvText.split(/\r?\n/);
+
+                    // 空行の末尾を除去
+                    while (lines.length > 0 && lines[lines.length - 1].trim() === '') {
+                        lines.pop();
+                    }
+
+                    if (lines.length < 3) {
+                        showError('CSVファイルのデータが不十分です（3行以上必要）');
+                        return;
+                    }
+
+                    // ===== ヘッダー行を自動検出 =====
+                    // 「医薬品」という列名を含む行をヘッダーとして検出
+                    let headerRowIndex = -1;
+                    for (let i = 0; i < Math.min(lines.length, 10); i++) {
+                        if (lines[i].includes('医薬品')) {
+                            headerRowIndex = i;
+                            break;
+                        }
+                    }
+
+                    if (headerRowIndex === -1) {
+                        showError('必須の列「医薬品」が見つかりませんでした。正しい売上入金管理表のCSVファイルかご確認ください。');
+                        return;
+                    }
+
+                    // ヘッダーをパース
+                    const headers = parseCSVLine(lines[headerRowIndex]);
+                    // ヘッダー名の前後の空白を除去
+                    const cleanHeaders = headers.map(h => h.trim());
+
+                    // 必須列のインデックスを取得
+                    const colIyakuhin = findColumnIndex(cleanHeaders, '医薬品');
+                    const colIryoKiki = findColumnIndex(cleanHeaders, '医療機器');
+                    const colZakka = findColumnIndex(cleanHeaders, '雑貨・化粧品');
+                    const colKashi = findColumnIndex(cleanHeaders, '菓子・食料品');
+                    const colRejibukuro = findColumnIndex(cleanHeaders, 'レジ袋');
+
+                    // 必須列の存在チェック
+                    const missingCols = [];
+                    if (colIyakuhin === -1) missingCols.push('医薬品');
+                    if (colIryoKiki === -1) missingCols.push('医療機器');
+                    if (colZakka === -1) missingCols.push('雑貨・化粧品');
+                    if (colKashi === -1) missingCols.push('菓子・食料品');
+                    if (colRejibukuro === -1) missingCols.push('レジ袋');
+
+                    if (missingCols.length > 0) {
+                        showError('以下の必須列が見つかりませんでした: ' + missingCols.join('、'));
+                        return;
+                    }
+
+                    // ===== ヘッダー前の情報行を保持（出力用） =====
+                    const preHeaderLines = [];
+                    for (let i = 0; i < headerRowIndex; i++) {
+                        preHeaderLines.push(parseCSVLine(lines[i]));
+                    }
+
+                    // ===== データ行を処理 =====
+                    const dataRows = [];
+                    let totalTax8 = 0;
+                    let totalTax10 = 0;
+                    let validRowCount = 0;
+
+                    for (let i = headerRowIndex + 1; i < lines.length; i++) {
+                        const line = lines[i].trim();
+                        if (line === '') continue; // 空行スキップ
+
+                        const cols = parseCSVLine(line);
+
+                        // 各売上金額を数値として取得
+                        const iyakuhin = parseNumber(cols[colIyakuhin]);
+                        const iryoKiki = parseNumber(cols[colIryoKiki]);
+                        const zakka = parseNumber(cols[colZakka]);
+                        const kashi = parseNumber(cols[colKashi]);
+                        const rejibukuro = parseNumber(cols[colRejibukuro]);
+
+                        // 10%売上 = 医薬品 + 医療機器 + 雑貨・化粧品 + レジ袋
+                        const tax10 = iyakuhin + iryoKiki + zakka + rejibukuro;
+                        // 8%売上 = 菓子・食料品
+                        const tax8 = kashi;
+
+                        // 合計に加算（空行や合計行も含めて計算）
+                        totalTax8 += tax8;
+                        totalTax10 += tax10;
+
+                        // データ行かどうかの判定（数値データがある行をカウント）
+                        if (cols.length > 2 && cols[2] !== '') {
+                            validRowCount++;
+                        }
+
+                        // 行データを保存
+                        dataRows.push({
+                            original: cols,
+                            tax8: tax8,
+                            tax10: tax10
+                        });
+                    }
+
+                    // ===== Excelファイル生成 =====
+                    generateExcel(preHeaderLines, cleanHeaders, dataRows, totalTax8, totalTax10, validRowCount, originalFileName);
+
+                } catch (err) {
+                    showError('CSVデータの処理中にエラーが発生しました: ' + err.message);
+                    console.error(err);
+                }
+            }
+
+            // ===== CSV行のパース（カンマ区切り、引用符対応） =====
+            function parseCSVLine(line) {
+                const result = [];
+                let current = '';
+                let inQuotes = false;
+
+                for (let i = 0; i < line.length; i++) {
+                    const char = line[i];
+
+                    if (inQuotes) {
+                        if (char === '"') {
+                            // 次の文字もダブルクォートならエスケープ
+                            if (i + 1 < line.length && line[i + 1] === '"') {
+                                current += '"';
+                                i++;
+                            } else {
+                                inQuotes = false;
+                            }
+                        } else {
+                            current += char;
+                        }
+                    } else {
+                        if (char === '"') {
+                            inQuotes = true;
+                        } else if (char === ',') {
+                            result.push(current);
+                            current = '';
+                        } else {
+                            current += char;
+                        }
+                    }
+                }
+                result.push(current);
+                return result;
+            }
+
+            // ===== 列名の検索（部分一致） =====
+            function findColumnIndex(headers, keyword) {
+                // まず完全一致を探す（前後の空白は既に除去済み）
+                for (let i = 0; i < headers.length; i++) {
+                    if (headers[i] === keyword) return i;
+                }
+                // 部分一致で探す
+                for (let i = 0; i < headers.length; i++) {
+                    if (headers[i].includes(keyword)) return i;
+                }
+                return -1;
+            }
+
+            // ===== 数値パース =====
+            function parseNumber(value) {
+                if (value === undefined || value === null || value === '') return 0;
+                const cleaned = String(value).replace(/[,\s]/g, '');
+                const num = Number(cleaned);
+                return isNaN(num) ? 0 : num;
+            }
+
+            // ===== Excel生成＆ダウンロード =====
+            function generateExcel(preHeaderLines, headers, dataRows, totalTax8, totalTax10, validRowCount, originalFileName) {
+                const wb = XLSX.utils.book_new();
+
+                // === シート1: 詳細版 ===
+                const detailData = [];
+
+                // ヘッダー前の情報行を追加
+                for (const preRow of preHeaderLines) {
+                    detailData.push(preRow);
+                }
+
+                // ヘッダー行に「8%売上」「10%売上」を追加
+                const detailHeaders = [...headers, '8%売上', '10%売上'];
+                detailData.push(detailHeaders);
+
+                // データ行を追加
+                for (const row of dataRows) {
+                    const newRow = [...row.original];
+                    // 元データの列数をヘッダーに合わせてパディング
+                    while (newRow.length < headers.length) {
+                        newRow.push('');
+                    }
+                    newRow.push(row.tax8);
+                    newRow.push(row.tax10);
+                    detailData.push(newRow);
+                }
+
+                const ws1 = XLSX.utils.aoa_to_sheet(detailData);
+
+                // 列幅を自動調整
+                const detailColWidths = detailHeaders.map((h, i) => {
+                    let maxLen = getStringWidth(h);
+                    for (const row of detailData) {
+                        if (row[i] !== undefined && row[i] !== null) {
+                            maxLen = Math.max(maxLen, getStringWidth(String(row[i])));
+                        }
+                    }
+                    return { wch: Math.min(maxLen + 2, 30) };
+                });
+                ws1['!cols'] = detailColWidths;
+
+                // 数値列のセル書式設定（金額は数値型にする）
+                setNumericCells(ws1, detailData, preHeaderLines.length);
+
+                XLSX.utils.book_append_sheet(wb, ws1, '詳細版');
+
+                // === シート2: 簡易版 ===
+                const simpleData = [];
+
+                // ヘッダー前の情報行（最初の1行のみ）
+                if (preHeaderLines.length > 0) {
+                    simpleData.push(preHeaderLines[0]);
+                }
+
+                // 簡易版ヘッダー
+                const simpleHeaders = ['日', '曜', '8%売上', '10%売上'];
+                simpleData.push(simpleHeaders);
+
+                // データ行：日・曜＋8%/10%売上のみ
+                for (const row of dataRows) {
+                    simpleData.push([
+                        row.original[0] || '',   // 日
+                        row.original[1] || '',   // 曜
+                        row.tax8,
+                        row.tax10
+                    ]);
+                }
+
+                const ws2 = XLSX.utils.aoa_to_sheet(simpleData);
+
+                // 列幅を設定
+                ws2['!cols'] = [
+                    { wch: 6 },   // 日
+                    { wch: 6 },   // 曜
+                    { wch: 14 },  // 8%売上
+                    { wch: 14 }   // 10%売上
+                ];
+
+                // 数値セルの書式設定
+                const simpleHeaderRow = preHeaderLines.length > 0 ? 1 : 0;
+                setNumericCells(ws2, simpleData, simpleHeaderRow);
+
+                XLSX.utils.book_append_sheet(wb, ws2, '簡易版');
+
+                // ===== ファイルダウンロード（Blob方式で確実にxlsx出力） =====
+                const outputFileName = 'tax_summary.xlsx';
+                const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+                const blob = new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = outputFileName;
+                document.body.appendChild(a);
+                a.click();
+                // クリーンアップ
+                setTimeout(() => {
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                }, 100);
+
+                // ===== PDF出力（詳細版・A4横） =====
+                generatePDF(preHeaderLines, detailHeaders, dataRows, headers.length);
+
+                // 処理完了の表示
+                showSuccess('tax_summary.xlsx / tax_summary.pdf をダウンロードしました');
+                showSummary(totalTax8, totalTax10, validRowCount);
+            }
+
+            // ===== PDF生成（詳細版・A4横向き・html2canvasで日本語対応） =====
+            async function generatePDF(preHeaderLines, detailHeaders, dataRows, origHeaderLen) {
+                // 8%/10%売上の列インデックス（最後の2列）
+                const tax8ColIdx = detailHeaders.length - 2;
+                const tax10ColIdx = detailHeaders.length - 1;
+
+                // HTMLテーブルを組み立て（非表示で描画用）
+                let html = '<div id="pdfSource" style="position:absolute;left:-9999px;top:0;background:#fff;padding:16px 20px;font-family:\'Noto Sans JP\',\'Meiryo\',sans-serif;color:#000;">';
+
+                // タイトル情報
+                if (preHeaderLines.length > 0) {
+                    const title = preHeaderLines[0].filter(c => c.trim()).join(' ');
+                    html += '<div style="font-size:14px;font-weight:bold;color:#000;margin-bottom:3px;">' + escapeHtml(title) + '</div>';
+                }
+                if (preHeaderLines.length > 1) {
+                    const sub = preHeaderLines[1].filter(c => c.trim()).join(' ').replace(/\s+/g, ' ').trim();
+                    html += '<div style="font-size:10px;color:#333;margin-bottom:10px;">' + escapeHtml(sub) + '</div>';
+                }
+
+                // テーブル
+                html += '<table style="border-collapse:collapse;font-size:8.5px;width:100%;color:#000;">';
+
+                // ヘッダー行
+                html += '<thead><tr>';
+                detailHeaders.forEach((h, i) => {
+                    let bg = '#2c3e50';
+                    if (i === tax8ColIdx) bg = '#1e8449';
+                    if (i === tax10ColIdx) bg = '#1a5276';
+                    html += '<th style="background:' + bg + ';color:#fff;padding:5px 6px;border:1px solid #999;white-space:nowrap;text-align:center;font-weight:bold;font-size:8px;">' + escapeHtml(h.trim()) + '</th>';
+                });
+                html += '</tr></thead>';
+
+                // データ行
+                html += '<tbody>';
+                dataRows.forEach((row, rowIdx) => {
+                    const isLastRow = (rowIdx === dataRows.length - 1);
+                    const rowBg = isLastRow ? '#fce4b8' : (rowIdx % 2 === 1 ? '#f2f3f4' : '#fff');
+
+                    const newRow = [...row.original];
+                    while (newRow.length < origHeaderLen) newRow.push('');
+                    newRow.push(row.tax8);
+                    newRow.push(row.tax10);
+
+                    html += '<tr>';
+                    newRow.forEach((cell, i) => {
+                        let cellBg = rowBg;
+                        if (i === tax8ColIdx && !isLastRow) cellBg = '#d5f5e3';
+                        if (i === tax10ColIdx && !isLastRow) cellBg = '#d4e6f1';
+                        const align = i >= 2 ? 'right' : 'center';
+                        const fontWeight = isLastRow ? 'bold' : 'normal';
+                        let displayVal = '';
+                        if (cell !== undefined && cell !== null && String(cell).trim() !== '') {
+                            if (i >= 2) {
+                                const num = Number(String(cell).replace(/[,\s]/g, ''));
+                                displayVal = !isNaN(num) ? num.toLocaleString() : escapeHtml(String(cell));
+                            } else {
+                                displayVal = escapeHtml(String(cell));
+                            }
+                        }
+                        html += '<td style="padding:3px 6px;border:1px solid #aaa;text-align:' + align + ';background:' + cellBg + ';font-weight:' + fontWeight + ';white-space:nowrap;color:#000;">' + displayVal + '</td>';
+                    });
+                    html += '</tr>';
+                });
+                html += '</tbody></table></div>';
+
+                // DOMに追加
+                document.body.insertAdjacentHTML('beforeend', html);
+                const sourceEl = document.getElementById('pdfSource');
+
+                try {
+                    // html2canvasでキャプチャ
+                    const canvas = await html2canvas(sourceEl, {
+                        scale: 2,
+                        useCORS: true,
+                        backgroundColor: '#ffffff'
+                    });
+
+                    // A4横向きサイズ (mm)
+                    const pdfWidth = 297;
+                    const pdfHeight = 210;
+                    const margin = 6;
+                    const contentWidth = pdfWidth - margin * 2;
+                    const contentHeight = pdfHeight - margin * 2;
+
+                    // キャンバスのアスペクト比を保持してフィット
+                    const imgWidth = canvas.width;
+                    const imgHeight = canvas.height;
+                    const ratio = Math.min(contentWidth / imgWidth, contentHeight / imgHeight);
+                    const finalWidth = imgWidth * ratio;
+                    const finalHeight = imgHeight * ratio;
+
+                    const { jsPDF } = window.jspdf;
+                    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+
+                    // 画像としてPDFに追加
+                    const imgData = canvas.toDataURL('image/png');
+                    doc.addImage(imgData, 'PNG', margin, margin, finalWidth, finalHeight);
+
+                    // PDFダウンロード
+                    const pdfBlob = doc.output('blob');
+                    const pdfUrl = URL.createObjectURL(pdfBlob);
+                    const pdfLink = document.createElement('a');
+                    pdfLink.href = pdfUrl;
+                    pdfLink.download = 'tax_summary.pdf';
+                    document.body.appendChild(pdfLink);
+                    pdfLink.click();
+                    setTimeout(() => {
+                        document.body.removeChild(pdfLink);
+                        URL.revokeObjectURL(pdfUrl);
+                    }, 100);
+                } catch (err) {
+                    console.error('PDF生成エラー:', err);
+                } finally {
+                    // 非表示テーブルを削除
+                    sourceEl.remove();
+                }
+            }
+
+            // ===== HTMLエスケープ =====
+            function escapeHtml(str) {
+                return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+            }
+
+            // ===== 文字列の表示幅を取得（半角/全角対応） =====
+            function getStringWidth(str) {
+                let width = 0;
+                for (let i = 0; i < str.length; i++) {
+                    const code = str.charCodeAt(i);
+                    // 全角文字は幅2、それ以外は幅1
+                    if (code > 0xFF) {
+                        width += 2;
+                    } else {
+                        width += 1;
+                    }
+                }
+                return width;
+            }
+
+            // ===== 数値セルの書式設定 =====
+            function setNumericCells(ws, data, headerRowIndex) {
+                const range = XLSX.utils.decode_range(ws['!ref']);
+                for (let R = headerRowIndex + 1; R <= range.e.r; R++) {
+                    for (let C = 0; C <= range.e.c; C++) {
+                        const cellRef = XLSX.utils.encode_cell({ r: R, c: C });
+                        const cell = ws[cellRef];
+                        if (cell && cell.v !== undefined && cell.v !== '') {
+                            const numVal = Number(String(cell.v).replace(/[,\s]/g, ''));
+                            if (!isNaN(numVal) && String(cell.v).trim() !== '') {
+                                cell.v = numVal;
+                                cell.t = 'n';
+                                // 金額列には3桁区切りの書式を適用
+                                if (C >= 2) {
+                                    cell.z = '#,##0';
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+        })();
+    </script>
+</body>
+
+</html>
