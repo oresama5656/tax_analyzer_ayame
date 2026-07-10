@@ -775,7 +775,7 @@
                     // 必須列の存在チェック
                     const missingCols = [];
                     if (colIyakuhin === -1) missingCols.push('医薬品');
-                    if (colIryoKiki === -1) missingCols.push('医療機器');
+                    // 医療機器列は新フォーマットで廃止されたため必須チェックから除外
                     if (colZakka === -1) missingCols.push('雑貨・化粧品');
                     if (colKashi === -1) missingCols.push('菓子・食料品');
                     if (colRejibukuro === -1) missingCols.push('レジ袋');
@@ -805,7 +805,7 @@
 
                         // 各売上金額を数値として取得
                         const iyakuhin = parseNumber(cols[colIyakuhin]);
-                        const iryoKiki = parseNumber(cols[colIryoKiki]);
+                        const iryoKiki = colIryoKiki !== -1 ? parseNumber(cols[colIryoKiki]) : 0;
                         const zakka = parseNumber(cols[colZakka]);
                         const kashi = parseNumber(cols[colKashi]);
                         const rejibukuro = parseNumber(cols[colRejibukuro]);
