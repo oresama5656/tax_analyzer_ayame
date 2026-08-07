@@ -482,7 +482,7 @@
 
         .output-actions {
             display: grid;
-            grid-template-columns: 1fr 1fr;
+            grid-template-columns: repeat(3, 1fr);
             gap: 0.75rem;
         }
 
@@ -668,12 +668,16 @@
             <p class="output-description">普段は集約版、会計変更やエラー確認時は詳細版をご利用ください。</p>
             <div class="output-actions">
                 <button type="button" class="output-button primary" id="exportAggregate">
-                    <strong>集約版を出力</strong>
+                    <strong>集約版 Excel＋PDF</strong>
                     <small>必要な列だけに整理した、日常提出向けのシンプルな形式（Excel＋PDF）</small>
                 </button>
-                <button type="button" class="output-button" id="exportDetail">
-                    <strong>詳細版を出力</strong>
-                    <small>元データの列を残した、確認・調査向けの形式（Excel＋PDF）</small>
+                <button type="button" class="output-button" id="exportDetailPdf">
+                    <strong>詳細版 PDF</strong>
+                    <small>元データの列を残した、確認・調査向けのPDF形式</small>
+                </button>
+                <button type="button" class="output-button" id="exportDetailExcel">
+                    <strong>詳細版 Excel</strong>
+                    <small>元データの列を残した、確認・調査向けのExcel形式</small>
                 </button>
             </div>
         </div>
@@ -700,7 +704,8 @@
             const summaryCard = document.getElementById('summaryCard');
             const outputCard = document.getElementById('outputCard');
             const exportAggregate = document.getElementById('exportAggregate');
-            const exportDetail = document.getElementById('exportDetail');
+            const exportDetailPdf = document.getElementById('exportDetailPdf');
+            const exportDetailExcel = document.getElementById('exportDetailExcel');
             const sumTax8 = document.getElementById('sumTax8');
             const sumTax10 = document.getElementById('sumTax10');
             const sumRows = document.getElementById('sumRows');
@@ -797,8 +802,9 @@
                 }
             });
 
-            exportAggregate.addEventListener('click', () => exportOutput('aggregate'));
-            exportDetail.addEventListener('click', () => exportOutput('detail'));
+            exportAggregate.addEventListener('click', () => exportOutput('aggregate', 'both'));
+            exportDetailPdf.addEventListener('click', () => exportOutput('detail', 'pdf'));
+            exportDetailExcel.addEventListener('click', () => exportOutput('detail', 'excel'));
 
             // ===== ファイル処理のメイン関数 =====
             function handleFile(file) {
@@ -1103,7 +1109,6 @@
                     'クレジット',
                     'QRｺｰﾄﾞ決済',
                     '◆合計金額◆',
-                    '',
                     '8%売上',
                     '10%売上'
                 ];
@@ -1120,7 +1125,6 @@
                     row.credit,
                     row.qr,
                     row.paymentTotal,
-                    '',
                     row.tax8,
                     row.tax10
                 ]);
@@ -1135,24 +1139,33 @@
                 };
             }
 
-            async function exportOutput(mode) {
+            async function exportOutput(mode, format) {
                 if (!currentAnalysis) {
                     showError('先にCSVファイルを読み込んでください。');
                     return;
                 }
 
                 exportAggregate.disabled = true;
-                exportDetail.disabled = true;
+                exportDetailPdf.disabled = true;
+                exportDetailExcel.disabled = true;
 
                 try {
                     const output = mode === 'detail'
                         ? buildDetailOutput(currentAnalysis)
                         : buildAggregateOutput(currentAnalysis);
 
-                    generateExcel(currentAnalysis.preHeaderLines, output);
-                    await generatePDF(currentAnalysis.preHeaderLines, output);
+                    if (format === 'both' || format === 'excel') {
+                        generateExcel(currentAnalysis.preHeaderLines, output);
+                    }
+                    if (format === 'both' || format === 'pdf') {
+                        await generatePDF(currentAnalysis.preHeaderLines, output);
+                    }
+
+                    const downloadedFiles = format === 'both'
+                        ? output.xlsxFileName + ' / ' + output.pdfFileName
+                        : format === 'pdf' ? output.pdfFileName : output.xlsxFileName;
                     showSuccess(
-                        output.xlsxFileName + ' / ' + output.pdfFileName + ' をダウンロードしました。',
+                        downloadedFiles + ' をダウンロードしました。',
                         output.label + 'の出力完了'
                     );
                     showSummary(currentAnalysis.totalTax8, currentAnalysis.totalTax10, currentAnalysis.validRowCount);
@@ -1162,7 +1175,8 @@
                     console.error(err);
                 } finally {
                     exportAggregate.disabled = false;
-                    exportDetail.disabled = false;
+                    exportDetailPdf.disabled = false;
+                    exportDetailExcel.disabled = false;
                 }
             }
 
@@ -1237,30 +1251,56 @@
                 const tax10ColIdx = headers.indexOf('10%売上');
                 const cashColIdx = headers.indexOf('【入金】現金');
                 const weeklySales = calculateWeeklySales(headers, rows);
-                const sourceWidth = isAggregate ? '760px' : 'max-content';
-                const tableFontSize = isAggregate ? '7.2px' : '8.5px';
-                const cellPadding = isAggregate ? '2px 3px' : '3px 6px';
+                // 詳細版もブラウザの最大キャンバス幅を超えない固定幅で描画する
+                const sourceWidth = isAggregate ? '650px' : '1700px';
+                const tableFontSize = isAggregate ? '8.4px' : '10px';
+                const cellPadding = isAggregate ? '4px 4px' : '8px 4px';
+                const aggregateColumnWidths = [4, 4, 8, 10, 6, 8, 10, 10, 8, 8, 10, 7, 7];
+                const detailColumnWeights = headers.map(header => {
+                    if (header === '日' || header === '曜') return 2.5;
+                    if (header === '処方枚数') return 4;
+                    if (header === '調剤') return 6.5;
+                    if (header.includes('調剤負担金')) return 6.5;
+                    if (header === '雑貨・化粧品' || header === '菓子・食料品') return 5.5;
+                    if (header === '医薬品' || header === '医療機器') return 4.5;
+                    if (header === '容器代' || header === 'レジ袋' || header === '達成率') return 3.8;
+                    if (header === 'OTC合計') return 5.5;
+                    if (header.includes('◆合計金額◆')) return 6.5;
+                    if (header === '【入金】現金') return 6.5;
+                    if (header === 'クレジット' || header.includes('QR')) return 6;
+                    if (header === '未収金' || header === '8%売上' || header === '10%売上') return 5;
+                    return 5;
+                });
+                const detailWeightTotal = detailColumnWeights.reduce((sum, weight) => sum + weight, 0);
 
-                let html = '<div id="pdfSource" style="position:absolute;left:-9999px;top:0;width:' + sourceWidth + ';box-sizing:border-box;background:#fff;padding:18px 22px;font-family:\'Noto Sans JP\',\'Meiryo\',sans-serif;color:#17202a;">';
+                let html = '<div id="pdfSource" style="position:absolute;left:-9999px;top:0;width:' + sourceWidth + ';box-sizing:border-box;background:#fff;padding:22px 24px;font-family:\'Noto Sans JP\',\'Meiryo\',sans-serif;color:#17202a;">';
 
                 if (preHeaderLines.length > 0) {
                     const title = preHeaderLines[0].filter(c => c.trim()).join(' ');
-                    html += '<div style="font-size:15px;font-weight:bold;color:#17202a;margin-bottom:3px;">' + escapeHtml(title) + '</div>';
+                    html += '<div style="font-size:17px;font-weight:bold;color:#17202a;margin-bottom:4px;">' + escapeHtml(title) + '</div>';
                 }
                 if (preHeaderLines.length > 1) {
                     const sub = preHeaderLines[1].filter(c => c.trim()).join(' ').replace(/\s+/g, ' ').trim();
-                    html += '<div style="font-size:9px;color:#566573;margin-bottom:10px;padding-bottom:7px;border-bottom:2px solid #2c3e50;">' + escapeHtml(sub) + '</div>';
+                    html += '<div style="font-size:10px;color:#566573;margin-bottom:13px;padding-bottom:9px;border-bottom:2px solid #2c3e50;">' + escapeHtml(sub) + '</div>';
                 }
 
-                html += '<div style="font-size:10px;font-weight:bold;color:#2c3e50;margin:0 0 5px 1px;">日別売上一覧</div>';
-                html += '<table style="border-collapse:collapse;font-size:' + tableFontSize + ';width:100%;table-layout:' + (isAggregate ? 'fixed' : 'auto') + ';color:#17202a;">';
+                html += '<div style="font-size:11px;font-weight:bold;color:#2c3e50;margin:0 0 7px 1px;">日別売上一覧</div>';
+                html += '<table style="border-collapse:collapse;font-size:' + tableFontSize + ';width:100%;table-layout:fixed;color:#17202a;">';
+                html += '<colgroup>';
+                const columnWidths = isAggregate
+                    ? aggregateColumnWidths
+                    : detailColumnWeights.map(weight => weight / detailWeightTotal * 100);
+                columnWidths.forEach(width => {
+                    html += '<col style="width:' + width + '%;">';
+                });
+                html += '</colgroup>';
                 html += '<thead><tr>';
                 headers.forEach((header, index) => {
                     let bg = '#2c3e50';
                     if (index === tax8ColIdx) bg = '#1e8449';
                     if (index === tax10ColIdx) bg = '#1a5276';
                     if (index === cashColIdx) bg = '#9a6700';
-                    html += '<th style="background:' + bg + ';color:#fff;padding:4px 3px;border:1px solid #85929e;white-space:' + (isAggregate ? 'normal' : 'nowrap') + ';text-align:center;font-weight:bold;line-height:1.25;">' + escapeHtml(header.trim()) + '</th>';
+                    html += '<th style="background:' + bg + ';color:#fff;padding:6px 3px;border:1px solid #85929e;white-space:normal;text-align:center;font-size:' + (isAggregate ? '8.2px' : '9.5px') + ';font-weight:bold;line-height:1.25;">' + escapeHtml(header.trim()) + '</th>';
                 });
                 html += '</tr></thead><tbody>';
 
@@ -1288,23 +1328,23 @@
                             }
                         }
 
-                        html += '<td style="padding:' + cellPadding + ';border:1px solid #bdc3c7;text-align:' + align + ';background:' + cellBg + ';font-weight:' + fontWeight + ';white-space:nowrap;color:#17202a;line-height:1.15;">' + displayValue + '</td>';
+                        html += '<td style="padding:' + cellPadding + ';border:1px solid #bdc3c7;text-align:' + align + ';background:' + cellBg + ';font-weight:' + fontWeight + ';white-space:nowrap;color:#17202a;line-height:1.2;">' + displayValue + '</td>';
                     });
 
                     html += '</tr>';
                 });
                 html += '</tbody></table>';
 
-                html += '<div style="margin-top:13px;padding-top:9px;border-top:2px solid #d5d8dc;">';
-                html += '<div style="font-size:10px;font-weight:bold;color:#2c3e50;margin-bottom:6px;">週別売上合計</div>';
-                html += '<table style="border-collapse:separate;border-spacing:5px 0;width:100%;table-layout:fixed;">';
+                html += '<div style="margin-top:18px;padding-top:12px;border-top:2px solid #d5d8dc;">';
+                html += '<div style="font-size:11px;font-weight:bold;color:#2c3e50;margin-bottom:8px;">週別売上合計</div>';
+                html += '<table style="border-collapse:separate;border-spacing:6px 0;width:100%;table-layout:fixed;">';
                 html += '<thead><tr>';
                 weeklySales.forEach(week => {
-                    html += '<th style="background:#34495e;color:#fff;padding:5px 4px;border-radius:4px 4px 0 0;font-size:8px;text-align:center;">' + escapeHtml(week.label) + '<span style="display:block;font-size:6.8px;font-weight:normal;color:#d5d8dc;margin-top:1px;">' + escapeHtml(week.period) + '</span></th>';
+                    html += '<th style="background:#34495e;color:#fff;padding:8px 5px;border-radius:4px 4px 0 0;font-size:10px;text-align:center;">' + escapeHtml(week.label) + '<span style="display:block;font-size:8px;font-weight:normal;color:#d5d8dc;margin-top:2px;">' + escapeHtml(week.period) + '</span></th>';
                 });
                 html += '</tr></thead><tbody><tr>';
                 weeklySales.forEach(week => {
-                    html += '<td style="background:#f4f6f7;border:1px solid #d5d8dc;border-top:none;border-radius:0 0 4px 4px;padding:8px 5px;text-align:right;font-size:12px;font-weight:bold;color:#1b4f72;">&#165;' + week.total.toLocaleString() + '</td>';
+                    html += '<td style="background:#f4f6f7;border:1px solid #d5d8dc;border-top:none;border-radius:0 0 4px 4px;padding:12px 7px;text-align:right;font-size:16px;font-weight:bold;color:#1b4f72;">&#165;' + week.total.toLocaleString() + '</td>';
                 });
                 html += '</tr></tbody></table></div></div>';
 
@@ -1313,7 +1353,8 @@
 
                 try {
                     const canvas = await html2canvas(sourceEl, {
-                        scale: 2,
+                        // 詳細版は横幅が大きいため、ブラウザのキャンバス上限を超えない倍率にする
+                        scale: isAggregate ? 2 : 1,
                         useCORS: true,
                         backgroundColor: '#ffffff'
                     });
@@ -1334,7 +1375,28 @@
                         unit: 'mm',
                         format: 'a4'
                     });
-                    doc.addImage(canvas.toDataURL('image/png'), 'PNG', imageX, margin, finalWidth, finalHeight);
+                    // 詳細版はA4に必要な解像度まで縮小し、安全な画像サイズで埋め込む
+                    let imageCanvas = canvas;
+                    if (!isAggregate && canvas.width > 2400) {
+                        const resizeRatio = 2400 / canvas.width;
+                        const resizedCanvas = document.createElement('canvas');
+                        resizedCanvas.width = 2400;
+                        resizedCanvas.height = Math.max(1, Math.round(canvas.height * resizeRatio));
+                        const resizedContext = resizedCanvas.getContext('2d');
+                        resizedContext.fillStyle = '#ffffff';
+                        resizedContext.fillRect(0, 0, resizedCanvas.width, resizedCanvas.height);
+                        resizedContext.drawImage(canvas, 0, 0, resizedCanvas.width, resizedCanvas.height);
+                        imageCanvas = resizedCanvas;
+                    }
+
+                    const imageFormat = isAggregate ? 'PNG' : 'JPEG';
+                    const imageData = isAggregate
+                        ? imageCanvas.toDataURL('image/png')
+                        : imageCanvas.toDataURL('image/jpeg', 0.95);
+                    if (!imageData.startsWith('data:image/') || imageData.length < 1000) {
+                        throw new Error('PDF用画像の生成に失敗しました。');
+                    }
+                    doc.addImage(imageData, imageFormat, imageX, margin, finalWidth, finalHeight);
 
                     const pdfBlob = doc.output('blob');
                     const pdfUrl = URL.createObjectURL(pdfBlob);
